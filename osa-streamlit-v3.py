@@ -68,8 +68,11 @@ def generate_asset_report(df, radius_km):
             exact_simpson = exact_location['simpson'].values[0]
             ecosystems = [eco.capitalize() for eco in ['mangrove', 'seamount', 'cold_water_coral', 'seagrass', 'coral'] 
                           if eco in exact_location.columns and exact_location[eco].values[0] > 0]
+            
+            # Extract name if it exists
+            asset_name = exact_location['name'].values[0] if 'name' in exact_location.columns else None
         else:
-            exact_shannon, exact_simpson, ecosystems = None, None, []
+            exact_shannon, exact_simpson, ecosystems, asset_name = None, None, [], None
             
         # Extract surrounding data
         neighbors = asset_df[asset_df['is_neighbor'].str.lower() == "neighbor"]
@@ -86,7 +89,13 @@ def generate_asset_report(df, radius_km):
         
         # Construct Report
         report = f"""
-Asset ID: {asset_id}
+Asset ID: {asset_id}"""
+
+        # Add name if it exists
+        if asset_name is not None:
+            report += f"\nName: {asset_name}"
+            
+        report += f"""
 Biodiversity Rank: #{int(asset_rank) if asset_rank else "N/A"} out of {total_assets}
 -----------------------------------
 Exact Location:
@@ -104,7 +113,11 @@ Surrounding Area ({radius_km}km radius):
                 if eco in neighbors.columns:
                     report += f"    - {eco.replace('_', ' ').title()}: {safe_format(neighbors[eco].mean() * 100)}%\n"
         
-        report_dict[asset_id] = {"report": report, "rank": asset_rank}
+        report_dict[asset_id] = {
+            "report": report, 
+            "rank": asset_rank,
+            "name": asset_name  # Store the name for use in display
+        }
     
     return report_dict
 
@@ -134,11 +147,13 @@ def load_and_process_asset_data(uploaded_file, distance_km=50):
     lat_columns = {'latitude', 'lat'}
     lon_columns = {'longitude', 'long', 'lon'}
     asset_id_columns = {'asset_id', 'id', 'assetid'}
+    name_columns = {'name', 'asset_name', 'title', 'label'}
     
     # Find actual column names in the dataset
     lat_col = next((col for col in df.columns if col in lat_columns), None)
     lon_col = next((col for col in df.columns if col in lon_columns), None)
     asset_id_col = next((col for col in df.columns if col in asset_id_columns), None)
+    name_col = next((col for col in df.columns if col in name_columns), None)
     
     # Validate presence of required columns
     if not lat_col or not lon_col:
@@ -161,13 +176,19 @@ def load_and_process_asset_data(uploaded_file, distance_km=50):
     df['h3_neighbors'] = df['h3_index'].apply(get_h3_neighbors)
     
     # Create a standardized DataFrame with consistent column names
-    result_df = pd.DataFrame({
+    result_columns = {
         'asset_id': df[asset_id_col],
         'lat': df[lat_col],
         'lon': df[lon_col],
         'h3_index': df['h3_index'],
         'h3_neighbors': df['h3_neighbors']
-    })
+    }
+    
+    # Add name column if it exists
+    if name_col:
+        result_columns['name'] = df[name_col]
+    
+    result_df = pd.DataFrame(result_columns)
     
     return result_df
 
@@ -213,8 +234,12 @@ def query_osa_data(df):
                 lambda x: 'Neighbor' if x != row['h3_index'] and x in row['h3_neighbors'] else 'Asset'
             )
             
-            # Add the asset_id to the results (the current asset's ID)
+            # Add the asset_id to the results
             result_df['asset_id'] = row['asset_id']
+            
+            # Add asset name if it exists
+            if 'name' in row:
+                result_df['name'] = row['name']
             
             # Append the result to the all_results list
             all_results.append(result_df)
@@ -237,7 +262,7 @@ with st.sidebar:
     uploaded_file = st.file_uploader(
         "Upload your asset data (CSV or Excel)",
         type=["csv", "xlsx", "xls"],
-        help="File should contain columns for asset_id, latitude/lat, and longitude/long/lon"
+        help="File should contain columns for asset_id, latitude/lat, longitude/long/lon, and optionally name"
     )
     
     # Distance slider
@@ -290,6 +315,8 @@ with tabs[0]:
             st.subheader("Sample H3 Neighbors")
             sample_asset = st.session_state.processed_df.iloc[0]
             st.write(f"Asset ID: {sample_asset['asset_id']}")
+            if 'name' in sample_asset:
+                st.write(f"Name: {sample_asset['name']}")
             st.write(f"H3 Index: {sample_asset['h3_index']}")
             st.write(f"Number of neighboring hexagons: {len(sample_asset['h3_neighbors'])}")
             st.write("Sample neighbors (first 5):")
@@ -355,11 +382,13 @@ with tabs[2]:
                         key=lambda x: (x[1]["rank"] if x[1]["rank"] is not None else float('inf'))
                     )
                     
-                    # Create selection options with rank included
-                    options = [
-                        f"#{int(info['rank'])} - Asset ID: {asset_id}" 
-                        for asset_id, info in sorted_assets
-                    ]
+                    # Create selection options with rank and name (if available)
+                    options = []
+                    for asset_id, info in sorted_assets:
+                        option_text = f"#{int(info['rank'])} - Asset ID: {asset_id}"
+                        if info['name'] is not None:
+                            option_text += f" ({info['name']})"
+                        options.append(option_text)
                     
                     # Display the dropdown with ranking information
                     if options:
@@ -369,7 +398,7 @@ with tabs[2]:
                         )
                         
                         # Extract asset_id from the selected option
-                        selected_asset_id = int(selected_option.split("Asset ID: ")[1])
+                        selected_asset_id = int(selected_option.split("Asset ID: ")[1].split(" ")[0])
                         
                         # Display the report
                         st.text_area(
@@ -383,10 +412,18 @@ with tabs[2]:
                     asset_ids = sorted(st.session_state.asset_reports.keys())
                     
                     if asset_ids:
+                        # Create a format function to include name if available
+                        def format_asset_option(asset_id):
+                            asset_info = st.session_state.asset_reports[asset_id]
+                            if asset_info['name'] is not None:
+                                return f"Asset ID: {asset_id} ({asset_info['name']})"
+                            else:
+                                return f"Asset ID: {asset_id}"
+                        
                         selected_asset = st.selectbox(
                             "Select Asset to View Report", 
                             options=asset_ids,
-                            format_func=lambda x: f"Asset ID: {x}"
+                            format_func=format_asset_option
                         )
                         
                         # Display the report for the selected asset
