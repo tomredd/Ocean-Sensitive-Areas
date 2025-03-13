@@ -98,7 +98,7 @@ Asset ID: {asset_id}"""
         report += f"""
 Biodiversity Rank: #{int(asset_rank) if asset_rank else "N/A"} out of {total_assets}
 -----------------------------------
-Exact Location:
+Immediate Vicinity:
   - Shannon Index: {safe_format(exact_shannon)} ({categorize_shannon(exact_shannon)})
   - Simpson Index: {safe_format(exact_simpson)} ({categorize_simpson(exact_simpson)})
   - Ecosystems: {', '.join(ecosystems) if ecosystems else "None"}
@@ -260,14 +260,14 @@ with st.sidebar:
     
     # File uploader
     uploaded_file = st.file_uploader(
-        "Upload your asset data (CSV or Excel)",
+        "Upload your asset data (CSV or Excel)- see info box for expected values",
         type=["csv", "xlsx", "xls"],
         help="File should contain columns for asset_id, latitude/lat, longitude/long/lon, and optionally name"
     )
     
     # Distance slider
     distance_km = st.slider(
-        "Distance (km) for neighboring hexagons",
+        "Radius (km) around asset analyse",
         min_value=10,
         max_value=200,
         value=50,
@@ -290,7 +290,7 @@ with st.sidebar:
     
     # Query button (only enabled if data is processed)
     query_button = st.button(
-        "Query Ocean Sensitive Areas",
+        "Run Analytics",
         disabled=st.session_state.processed_df is None
     )
     
